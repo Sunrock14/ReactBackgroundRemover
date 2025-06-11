@@ -426,9 +426,36 @@ export default function App() {
   };
 
   const downloadImage = (url, name) => {
+    // Tarih saat formatı oluştur
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+    
+    const dateTimeString = `${year}${month}${day}_${hours}${minutes}${seconds}`;
+    
+    // Dosya adını hazırla
+    let fileName;
+    if (name) {
+      // Eğer name parametresi varsa, uzantıyı ayır ve tarih ekle
+      const lastDotIndex = name.lastIndexOf('.');
+      if (lastDotIndex !== -1) {
+        const nameWithoutExt = name.substring(0, lastDotIndex);
+        const extension = name.substring(lastDotIndex);
+        fileName = `${dateTimeString}${extension}`;
+      } else {
+        fileName = `${dateTimeString}`;
+      }
+    } else {
+      fileName = `${dateTimeString}.png`;
+    }
+    
     const link = document.createElement("a");
     link.href = url;
-    link.download = name || "gorsel.png";
+    link.download = fileName;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

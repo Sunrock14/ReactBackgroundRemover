@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { 
   Crop, Eraser, Wand2, Brush, X, RotateCcw, RotateCw, ZoomIn, ZoomOut, Download, Move, Square, 
   Smartphone, Monitor, Film, FlipHorizontal, FlipVertical, RotateCw as Rotate90, Palette, 
-  Sun, Moon, Contrast, Droplets, Zap, Eye, Sparkles, Image as ImageIcon
+  Sun, Moon, Contrast, Droplets, Zap, Eye, Sparkles, Image as ImageIcon, ArrowLeft, ArrowRight
 } from "lucide-react";
 
 export default function EditModal({ imageUrl, onClose }) {
@@ -26,6 +26,7 @@ export default function EditModal({ imageUrl, onClose }) {
   const [showCursor, setShowCursor] = useState(false);
   const [tolerance, setTolerance] = useState(10);
   const [brushColor, setBrushColor] = useState('#ffffff');
+  
   
   // Yeni filter durumları
   const [filters, setFilters] = useState({
@@ -245,31 +246,49 @@ export default function EditModal({ imageUrl, onClose }) {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  
+    // Önce mevcut içeriği geçici bir canvas'a kopyala
+    const tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d');
+    tempCanvas.width = canvas.width;
+    tempCanvas.height = canvas.height;
+    tempCtx.drawImage(canvas, 0, 0);
+  
+    // Ana canvas'ı temizle
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     
+    // Flip uygulayarak geçici canvas'tan çiz
     ctx.save();
     ctx.scale(-1, 1);
-    ctx.drawImage(canvas, -canvas.width, 0);
+    ctx.drawImage(tempCanvas, -canvas.width, 0);
     ctx.restore();
-
+  
     originalImageData.current = ctx.getImageData(0, 0, canvas.width, canvas.height);
     saveToHistory();
   };
-
+  
   const flipVertical = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  
+    // Önce mevcut içeriği geçici bir canvas'a kopyala
+    const tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d');
+    tempCanvas.width = canvas.width;
+    tempCanvas.height = canvas.height;
+    tempCtx.drawImage(canvas, 0, 0);
+  
+    // Ana canvas'ı temizle
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     
+    // Flip uygulayarak geçici canvas'tan çiz
     ctx.save();
     ctx.scale(1, -1);
-    ctx.drawImage(canvas, 0, -canvas.height);
+    ctx.drawImage(tempCanvas, 0, -canvas.height);
     ctx.restore();
-
+  
     originalImageData.current = ctx.getImageData(0, 0, canvas.width, canvas.height);
     saveToHistory();
   };
@@ -331,13 +350,14 @@ export default function EditModal({ imageUrl, onClose }) {
 
   const getMousePos = (e) => {
     const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / (rect.width * zoom);
-    const scaleY = canvas.height / (rect.height * zoom);
-    return {
-      x: (e.clientX - rect.left) * scaleX,
-      y: (e.clientY - rect.top) * scaleY
-    };
+    // Mouse'un canvas üzerindeki pozisyonunu bul
+    const x = (e.clientX - rect.left) / zoom;
+    const y = (e.clientY - rect.top) / zoom;
+
+    return { x, y };
   };
 
   const updateCursor = (e) => {
@@ -787,9 +807,21 @@ export default function EditModal({ imageUrl, onClose }) {
   const downloadEditedImage = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    
+    // Tarih saat formatı oluştur
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+    
+    const dateTimeString = `${year}${month}${day}_${hours}${minutes}${seconds}`;
+    
     const link = document.createElement("a");
     link.href = canvas.toDataURL("image/png");
-    link.download = "duzenlenmis-gorsel.png";
+    link.download = `${dateTimeString}.png`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -839,14 +871,14 @@ export default function EditModal({ imageUrl, onClose }) {
               onClick={() => setActiveTool('smart_brush')}
               title="Akıllı Silgi"
             >
-              <Wand2 size={20} />
+            <Sparkles size={20} />
             </button>
             <button
               className={`p-2 rounded ${activeTool === 'magic_wand' ? 'bg-blue-600' : 'bg-gray-600 hover:bg-gray-500'} text-white`}
               onClick={() => setActiveTool('magic_wand')}
               title="Sihirli Değnek"
             >
-              <Move size={20} />
+              <Wand2 size={20} />
             </button>
           </div>
 
@@ -937,7 +969,7 @@ export default function EditModal({ imageUrl, onClose }) {
               className="p-2 rounded bg-gray-600 hover:bg-gray-500 disabled:opacity-50 text-white"
               title="Geri Al"
             >
-              <RotateCcw size={20} />
+              <ArrowLeft  size={20} />
             </button>
             <button
               onClick={redo}
@@ -945,7 +977,7 @@ export default function EditModal({ imageUrl, onClose }) {
               className="p-2 rounded bg-gray-600 hover:bg-gray-500 disabled:opacity-50 text-white"
               title="İleri Al"
             >
-              <RotateCw size={20} />
+              <ArrowRight  size={20} />
             </button>
           </div>
 
