@@ -16,6 +16,7 @@
     "dexie-react-hooks": "^1.1.7",
     "file-saver": "^2.0.5",
     "jszip": "^3.10.1",
+    "lucide-react": "^0.514.0",
     "mp4-muxer": "^5.1.1",
     "onnxruntime-web": "^1.20.0-dev.20240908-de7a02beef",
     "react": "^18.3.1",
