@@ -9,19 +9,19 @@ export default function EditModal({ imageUrl, onClose }) {
   const [activeTool, setActiveTool] = useState('crop');
   const [brushSize, setBrushSize] = useState(20);
   const [isDrawing, setIsDrawing] = useState(false);
-  const [cropSelection, setCropSelection] = useState(null);
+  const [cropSelection, setCropSelection] = useState<{x: number, y: number, width: number, height: number} | null>(null);
   const [isCropping, setIsCropping] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
-  const [dragStart, setDragStart] = useState(null);
-  const [resizeHandle, setResizeHandle] = useState(null);
+  const [dragStart, setDragStart] = useState<{x: number, y: number} | null>(null);
+  const [resizeHandle, setResizeHandle] = useState<null | 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'w' | 'e'>(null);
   const [cropRatio, setCropRatio] = useState('free');
   const [zoom, setZoom] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
-  const [history, setHistory] = useState([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState<number>(-1);
   const [cursorPos, setCursorPos] = useState({ x: 0, y: 0 });
   const [showCursor, setShowCursor] = useState(false);
   const [tolerance, setTolerance] = useState(10);
@@ -42,12 +42,12 @@ export default function EditModal({ imageUrl, onClose }) {
   const [showFilters, setShowFilters] = useState(false);
   const [rotation, setRotation] = useState(0);
 
-  const canvasRef = useRef(null);
-  const overlayCanvasRef = useRef(null);
-  const cursorCanvasRef = useRef(null);
-  const imageRef = useRef(null);
-  const containerRef = useRef(null);
-  const originalImageData = useRef(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+  const cursorCanvasRef = useRef<HTMLCanvasElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const originalImageData = useRef<ImageData | null>(null);
 
   const cropRatios = {
     'free': { label: 'Serbest', ratio: null, icon: Crop },
@@ -56,17 +56,6 @@ export default function EditModal({ imageUrl, onClose }) {
     '9:16': { label: '9:16 (Dikey)', ratio: 9/16, icon: Smartphone },
     '4:3': { label: '4:3 (Klasik)', ratio: 4/3, icon: Film },
     '3:4': { label: '3:4 (Portre)', ratio: 3/4, icon: Film }
-  };
-
-  const filterPresets = {
-    normal: { name: 'Normal', brightness: 100, contrast: 100, saturation: 100, hue: 0, blur: 0, sepia: 0, grayscale: 0, invert: 0 },
-    vintage: { name: 'Vintage', brightness: 110, contrast: 85, saturation: 80, hue: 20, blur: 0, sepia: 40, grayscale: 0, invert: 0 },
-    bw: { name: 'Siyah Beyaz', brightness: 100, contrast: 110, saturation: 0, hue: 0, blur: 0, sepia: 0, grayscale: 100, invert: 0 },
-    warm: { name: 'Sıcak', brightness: 105, contrast: 95, saturation: 120, hue: 15, blur: 0, sepia: 20, grayscale: 0, invert: 0 },
-    cool: { name: 'Soğuk', brightness: 95, contrast: 105, saturation: 110, hue: -10, blur: 0, sepia: 0, grayscale: 0, invert: 0 },
-    dramatic: { name: 'Dramatik', brightness: 90, contrast: 140, saturation: 130, hue: 0, blur: 0, sepia: 0, grayscale: 0, invert: 0 },
-    soft: { name: 'Yumuşak', brightness: 115, contrast: 80, saturation: 90, hue: 5, blur: 1, sepia: 10, grayscale: 0, invert: 0 },
-    high_contrast: { name: 'Yüksek Kontrast', brightness: 100, contrast: 180, saturation: 120, hue: 0, blur: 0, sepia: 0, grayscale: 0, invert: 0 }
   };
 
   useEffect(() => {
@@ -109,7 +98,7 @@ export default function EditModal({ imageUrl, onClose }) {
   // Filtreleri uygula
   useEffect(() => {
     applyFilters();
-  }, [filters, rotation]);
+  }, [filters, rotation, imageUrl]);
 
   const saveToHistory = useCallback(() => {
     const canvas = canvasRef.current;
@@ -178,27 +167,34 @@ export default function EditModal({ imageUrl, onClose }) {
     const initialHistory = [canvas.toDataURL()];
     setHistory(initialHistory);
     setHistoryIndex(0);
+
+    // Filtreleri sıfırla ve uygula
+    setFilters({
+      brightness: 100,
+      contrast: 100,
+      saturation: 100,
+      hue: 0,
+      blur: 0,
+      sepia: 0,
+      grayscale: 0,
+      invert: 0,
+      opacity: 100
+    });
+    setRotation(0);
+    setTimeout(() => applyFilters(), 0);
   };
 
   const applyFilters = () => {
     const canvas = canvasRef.current;
-    if (!canvas || !originalImageData.current) return;
-    
+    const img = imageRef.current;
+    if (!canvas || !img) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Rotasyonu uygula
-    if (rotation !== 0) {
-      const centerX = canvas.width / 2;
-      const centerY = canvas.height / 2;
-      
-      ctx.save();
-      ctx.translate(centerX, centerY);
-      ctx.rotate((rotation * Math.PI) / 180);
-      ctx.translate(-centerX, -centerY);
-    }
+    // Canvas'ı temizle
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Canvas filtresini uygula
+    // Filtre stringini oluştur
     const filterString = `
       brightness(${filters.brightness}%) 
       contrast(${filters.contrast}%) 
@@ -211,13 +207,22 @@ export default function EditModal({ imageUrl, onClose }) {
       opacity(${filters.opacity}%)
     `.replace(/\s+/g, ' ').trim();
 
+    ctx.save();
     ctx.filter = filterString;
-    ctx.putImageData(originalImageData.current, 0, 0);
-    ctx.filter = 'none';
 
+    // Rotasyon uygula
     if (rotation !== 0) {
-      ctx.restore();
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      ctx.translate(centerX, centerY);
+      ctx.rotate((rotation * Math.PI) / 180);
+      ctx.translate(-centerX, -centerY);
     }
+
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+    ctx.restore();
+    ctx.filter = 'none';
   };
 
   const resetFilters = () => {
@@ -233,10 +238,6 @@ export default function EditModal({ imageUrl, onClose }) {
       opacity: 100
     });
     setRotation(0);
-  };
-
-  const applyFilterPreset = (preset) => {
-    setFilters(filterPresets[preset]);
   };
 
   const flipHorizontal = () => {
@@ -282,16 +283,19 @@ export default function EditModal({ imageUrl, onClose }) {
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     
     if (degrees === 90 || degrees === -90) {
+      if (!canvas) return;
       // 90 derece döndürme için canvas boyutlarını değiştir
       const tempCanvas = document.createElement('canvas');
       const tempCtx = tempCanvas.getContext('2d');
-      tempCanvas.width = canvas.height;
-      tempCanvas.height = canvas.width;
-      
-      tempCtx.translate(tempCanvas.width / 2, tempCanvas.height / 2);
-      tempCtx.rotate((degrees * Math.PI) / 180);
-      tempCtx.drawImage(canvas, -canvas.width / 2, -canvas.height / 2);
-      
+      const cHeight = canvas.height;
+      const cWidth = canvas.width;
+      tempCanvas.width = cHeight;
+      tempCanvas.height = cWidth;
+      if (tempCtx) {
+        tempCtx.translate(tempCanvas.width / 2, tempCanvas.height / 2);
+        tempCtx.rotate((degrees * Math.PI) / 180);
+        tempCtx.drawImage(canvas, -cWidth / 2, -cHeight / 2);
+      }
       canvas.width = tempCanvas.width;
       canvas.height = tempCanvas.height;
       
@@ -477,7 +481,8 @@ export default function EditModal({ imageUrl, onClose }) {
     const pos = getMousePos(e);
     
     if (activeTool === 'crop') {
-      if (isResizing && cropSelection) {
+      if (isResizing && cropSelection && dragStart) {
+        if (!cropSelection) return;
         const deltaX = pos.x - dragStart.x;
         const deltaY = pos.y - dragStart.y;
         let newSelection = { ...cropSelection };
@@ -527,10 +532,9 @@ export default function EditModal({ imageUrl, onClose }) {
         }
         
         setDragStart(pos);
-      } else if (isDragging && cropSelection) {
+      } else if (isDragging && cropSelection && dragStart) {
         const canvas = canvasRef.current;
-        if (!canvas) return;
-        
+        if (!canvas || !cropSelection) return;
         const newX = Math.max(0, Math.min(canvas.width - cropSelection.width, pos.x - dragStart.x));
         const newY = Math.max(0, Math.min(canvas.height - cropSelection.height, pos.y - dragStart.y));
         
@@ -745,7 +749,9 @@ export default function EditModal({ imageUrl, onClose }) {
     const stack = [{ x: startX, y: startY }];
     
     while (stack.length > 0) {
-      const { x, y } = stack.pop();
+      const popped = stack.pop();
+      if (!popped) continue;
+      const { x, y } = popped;
       const key = `${x},${y}`;
       
       if (visited.has(key) || x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) {
@@ -1014,28 +1020,6 @@ export default function EditModal({ imageUrl, onClose }) {
         {/* Filter Panel */}
         {showFilters && (
           <div className="p-4 border-b border-gray-700 bg-gray-750">
-            {/* Filter Presets */}
-            <div className="mb-4">
-              <h3 className="text-white text-sm font-medium mb-2">Hazır Filtreler</h3>
-              <div className="flex gap-2 flex-wrap">
-                {Object.entries(filterPresets).map(([key, preset]) => (
-                  <button
-                    key={key}
-                    onClick={() => applyFilterPreset(key)}
-                    className="px-3 py-1 text-xs bg-gray-600 hover:bg-gray-500 text-white rounded"
-                  >
-                    {preset.name}
-                  </button>
-                ))}
-                <button
-                  onClick={resetFilters}
-                  className="px-3 py-1 text-xs bg-red-600 hover:bg-red-700 text-white rounded"
-                >
-                  Sıfırla
-                </button>
-              </div>
-            </div>
-
             {/* Manual Filter Controls */}
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
               <div>
