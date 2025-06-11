@@ -8,7 +8,7 @@ import {
 } from "@huggingface/transformers";
 import { Crop, Eraser, Wand2, Brush, Download, Copy, X, RotateCcw, RotateCw, ZoomIn, ZoomOut } from "lucide-react";
 import "onnxruntime-web";
-import { EditModal } from "./components/EditModal";
+import EditModal from "./components/EditModal";
 
 function setCookie(name, value, days) {
   const expires = new Date(Date.now() + days * 864e5).toUTCString();

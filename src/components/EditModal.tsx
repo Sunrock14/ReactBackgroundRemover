@@ -1,38 +1,89 @@
-import React, { useState, useRef, useEffect } from "react";
-import { Crop, Eraser, Wand2, Brush, X, RotateCcw, RotateCw, ZoomIn, ZoomOut, Download } from "lucide-react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
+import { Crop, Eraser, Wand2, Brush, X, RotateCcw, RotateCw, ZoomIn, ZoomOut, Download, Move, Square, Smartphone, Monitor, Film } from "lucide-react";
 
-export function EditModal({ imageUrl, onClose }) {
+export default function EditModal({ imageUrl, onClose }) {
   const [activeTool, setActiveTool] = useState('crop');
   const [brushSize, setBrushSize] = useState(20);
   const [isDrawing, setIsDrawing] = useState(false);
-  const [cropStart, setCropStart] = useState<{x:number, y:number}|null>(null);
-  const [cropEnd, setCropEnd] = useState<{x:number, y:number}|null>(null);
+  const [cropSelection, setCropSelection] = useState(null); // { x, y, width, height }
   const [isCropping, setIsCropping] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isResizing, setIsResizing] = useState(false);
+  const [dragStart, setDragStart] = useState(null);
+  const [resizeHandle, setResizeHandle] = useState(null); // 'nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'
+  const [cropRatio, setCropRatio] = useState('free');
   const [zoom, setZoom] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
-  const [history, setHistory] = useState<string[]>([]);
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  const [history, setHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  const [cursorPos, setCursorPos] = useState({ x: 0, y: 0 });
+  const [showCursor, setShowCursor] = useState(false);
+  const [tolerance, setTolerance] = useState(10);
 
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const imageRef = useRef<HTMLImageElement | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef(null);
+  const overlayCanvasRef = useRef(null);
+  const cursorCanvasRef = useRef(null);
+  const imageRef = useRef(null);
+  const containerRef = useRef(null);
+
+  const cropRatios = {
+    'free': { label: 'Serbest', ratio: null, icon: Crop },
+    '1:1': { label: '1:1 (Kare)', ratio: 1, icon: Square },
+    '16:9': { label: '16:9 (Geniş)', ratio: 16/9, icon: Monitor },
+    '9:16': { label: '9:16 (Dikey)', ratio: 9/16, icon: Smartphone },
+    '4:3': { label: '4:3 (Klasik)', ratio: 4/3, icon: Film },
+    '3:4': { label: '3:4 (Portre)', ratio: 3/4, icon: Film }
+  };
 
   useEffect(() => {
     if (imageUrl) {
       setTimeout(() => initializeCanvas(), 100);
     }
-    // eslint-disable-next-line
   }, [imageUrl]);
 
-  const saveToHistory = () => {
+  // Keyboard event listener for Enter key
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Enter' && activeTool === 'crop' && cropSelection) {
+        applyCrop();
+      }
+      if (e.key === 'Escape' && activeTool === 'crop') {
+        setCropSelection(null);
+        clearOverlay();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeTool, cropSelection]);
+
+  // Mouse wheel zoom
+  useEffect(() => {
+    const handleWheel = (e) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const zoomDelta = e.deltaY > 0 ? -0.1 : 0.1;
+        setZoom(prev => Math.max(0.1, Math.min(5, prev + zoomDelta)));
+      }
+    };
+
+    const container = containerRef.current;
+    if (container) {
+      container.addEventListener('wheel', handleWheel, { passive: false });
+      return () => container.removeEventListener('wheel', handleWheel);
+    }
+  }, []);
+
+  const saveToHistory = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const newHistory = history.slice(0, historyIndex + 1);
     newHistory.push(canvas.toDataURL());
     setHistory(newHistory);
     setHistoryIndex(newHistory.length - 1);
-  };
+  }, [history, historyIndex]);
 
   const undo = () => {
     if (historyIndex > 0) {
@@ -71,15 +122,21 @@ export function EditModal({ imageUrl, onClose }) {
   const initializeCanvas = () => {
     const canvas = canvasRef.current;
     const overlayCanvas = overlayCanvasRef.current;
+    const cursorCanvas = cursorCanvasRef.current;
     const img = imageRef.current;
-    if (!canvas || !overlayCanvas || !img) return;
+    if (!canvas || !overlayCanvas || !cursorCanvas || !img) return;
+
     canvas.width = img.naturalWidth;
     canvas.height = img.naturalHeight;
+    overlayCanvas.width = img.naturalWidth;
+    overlayCanvas.height = img.naturalHeight;
+    cursorCanvas.width = img.naturalWidth;
+    cursorCanvas.height = img.naturalHeight;
+
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.drawImage(img, 0, 0);
-    overlayCanvas.width = img.naturalWidth;
-    overlayCanvas.height = img.naturalHeight;
+
     const initialHistory = [canvas.toDataURL()];
     setHistory(initialHistory);
     setHistoryIndex(0);
@@ -88,47 +145,265 @@ export function EditModal({ imageUrl, onClose }) {
   const getMousePos = (e) => {
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
+    const scaleX = canvas.width / (rect.width * zoom);
+    const scaleY = canvas.height / (rect.height * zoom);
     return {
       x: (e.clientX - rect.left) * scaleX,
       y: (e.clientY - rect.top) * scaleY
     };
   };
 
-  const handleMouseDown = (e) => {
+  const updateCursor = (e) => {
     const pos = getMousePos(e);
+    setCursorPos(pos);
+    
+    if (activeTool === 'eraser' || activeTool === 'brush' || activeTool === 'smart_brush') {
+      setShowCursor(true);
+      drawCursorPreview(pos);
+    } else {
+      setShowCursor(false);
+      clearCursorPreview();
+    }
+  };
+
+  const drawCursorPreview = (pos) => {
+    const cursorCanvas = cursorCanvasRef.current;
+    if (!cursorCanvas) return;
+    const ctx = cursorCanvas.getContext('2d');
+    if (!ctx) return;
+    
+    ctx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+    ctx.strokeStyle = '#00ff00';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, brushSize / 2, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  };
+
+  const clearCursorPreview = () => {
+    const cursorCanvas = cursorCanvasRef.current;
+    if (!cursorCanvas) return;
+    const ctx = cursorCanvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+  };
+
+  const clearOverlay = () => {
+    const overlayCanvas = overlayCanvasRef.current;
+    if (!overlayCanvas) return;
+    const ctx = overlayCanvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  };
+
+  const getResizeHandle = (pos) => {
+    if (!cropSelection) return null;
+    
+    const { x, y, width, height } = cropSelection;
+    const handleSize = 10;
+    
+    // Köşe tutamaçları
+    if (Math.abs(pos.x - x) < handleSize && Math.abs(pos.y - y) < handleSize) return 'nw';
+    if (Math.abs(pos.x - (x + width)) < handleSize && Math.abs(pos.y - y) < handleSize) return 'ne';
+    if (Math.abs(pos.x - x) < handleSize && Math.abs(pos.y - (y + height)) < handleSize) return 'sw';
+    if (Math.abs(pos.x - (x + width)) < handleSize && Math.abs(pos.y - (y + height)) < handleSize) return 'se';
+    
+    // Kenar tutamaçları
+    if (Math.abs(pos.x - (x + width/2)) < handleSize && Math.abs(pos.y - y) < handleSize) return 'n';
+    if (Math.abs(pos.x - (x + width/2)) < handleSize && Math.abs(pos.y - (y + height)) < handleSize) return 's';
+    if (Math.abs(pos.x - x) < handleSize && Math.abs(pos.y - (y + height/2)) < handleSize) return 'w';
+    if (Math.abs(pos.x - (x + width)) < handleSize && Math.abs(pos.y - (y + height/2)) < handleSize) return 'e';
+    
+    return null;
+  };
+
+  const isInsideCropSelection = (pos) => {
+    if (!cropSelection) return false;
+    const { x, y, width, height } = cropSelection;
+    return pos.x >= x && pos.x <= x + width && pos.y >= y && pos.y <= y + height;
+  };
+
+  const constrainDimensions = (width, height) => {
+    if (cropRatio === 'free' || !cropRatios[cropRatio].ratio) {
+      return { width, height };
+    }
+    
+    const ratio = cropRatios[cropRatio].ratio;
+    if (width / height > ratio) {
+      return { width: height * ratio, height };
+    } else {
+      return { width, height: width / ratio };
+    }
+  };
+
+  const handleMouseDown = (e) => {
+    if (e.button === 1) { // Middle mouse button for panning
+      e.preventDefault();
+      setIsPanning(true);
+      setPanStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y });
+      return;
+    }
+
+    const pos = getMousePos(e);
+    
     if (activeTool === 'crop') {
-      setCropStart({x: pos.x, y: pos.y});
-      setIsCropping(true);
+      const handle = getResizeHandle(pos);
+      if (handle) {
+        setIsResizing(true);
+        setResizeHandle(handle);
+        setDragStart(pos);
+      } else if (isInsideCropSelection(pos)) {
+        setIsDragging(true);
+        setDragStart({
+          x: pos.x - cropSelection.x,
+          y: pos.y - cropSelection.y
+        });
+      } else {
+        // Yeni seçim başlat
+        setIsCropping(true);
+        const initialSize = 100;
+        const { width, height } = constrainDimensions(initialSize, initialSize);
+        setCropSelection({
+          x: pos.x,
+          y: pos.y,
+          width,
+          height
+        });
+      }
     } else if (activeTool === 'eraser' || activeTool === 'brush') {
       setIsDrawing(true);
       drawBrush(pos);
+    } else if (activeTool === 'smart_brush') {
+      setIsDrawing(true);
+      smartBrushErase(pos);
     } else if (activeTool === 'magic_wand') {
       magicWandSelect(pos);
     }
   };
 
   const handleMouseMove = (e) => {
+    updateCursor(e);
+
+    if (isPanning) {
+      setPanOffset({
+        x: e.clientX - panStart.x,
+        y: e.clientY - panStart.y
+      });
+      return;
+    }
+
     const pos = getMousePos(e);
-    if (activeTool === 'crop' && isCropping) {
-      setCropEnd({x: pos.x, y: pos.y});
+    
+    if (activeTool === 'crop') {
+      if (isResizing && cropSelection) {
+        const deltaX = pos.x - dragStart.x;
+        const deltaY = pos.y - dragStart.y;
+        let newSelection = { ...cropSelection };
+        
+        switch (resizeHandle) {
+          case 'nw':
+            newSelection.x += deltaX;
+            newSelection.y += deltaY;
+            newSelection.width -= deltaX;
+            newSelection.height -= deltaY;
+            break;
+          case 'ne':
+            newSelection.y += deltaY;
+            newSelection.width += deltaX;
+            newSelection.height -= deltaY;
+            break;
+          case 'sw':
+            newSelection.x += deltaX;
+            newSelection.width -= deltaX;
+            newSelection.height += deltaY;
+            break;
+          case 'se':
+            newSelection.width += deltaX;
+            newSelection.height += deltaY;
+            break;
+          case 'n':
+            newSelection.y += deltaY;
+            newSelection.height -= deltaY;
+            break;
+          case 's':
+            newSelection.height += deltaY;
+            break;
+          case 'w':
+            newSelection.x += deltaX;
+            newSelection.width -= deltaX;
+            break;
+          case 'e':
+            newSelection.width += deltaX;
+            break;
+        }
+        
+        // Minimum boyut kontrolü
+        if (newSelection.width > 10 && newSelection.height > 10) {
+          const constrained = constrainDimensions(newSelection.width, newSelection.height);
+          newSelection.width = constrained.width;
+          newSelection.height = constrained.height;
+          setCropSelection(newSelection);
+        }
+        
+        setDragStart(pos);
+      } else if (isDragging && cropSelection) {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        
+        const newX = Math.max(0, Math.min(canvas.width - cropSelection.width, pos.x - dragStart.x));
+        const newY = Math.max(0, Math.min(canvas.height - cropSelection.height, pos.y - dragStart.y));
+        
+        setCropSelection({
+          ...cropSelection,
+          x: newX,
+          y: newY
+        });
+      } else if (isCropping && cropSelection) {
+        const width = Math.abs(pos.x - cropSelection.x);
+        const height = Math.abs(pos.y - cropSelection.y);
+        const constrained = constrainDimensions(width, height);
+        
+        setCropSelection({
+          ...cropSelection,
+          width: constrained.width,
+          height: constrained.height
+        });
+      }
+      
       drawCropOverlay();
     } else if ((activeTool === 'eraser' || activeTool === 'brush') && isDrawing) {
       drawBrush(pos);
+    } else if (activeTool === 'smart_brush' && isDrawing) {
+      smartBrushErase(pos);
     }
   };
 
-  const handleMouseUp = () => {
-    if (activeTool === 'crop' && isCropping) {
-      setIsCropping(false);
-      if (cropStart && cropEnd) {
-        applyCrop();
-      }
-    } else if (activeTool === 'eraser' || activeTool === 'brush') {
+  const handleMouseUp = (e) => {
+    setIsPanning(false);
+    setIsCropping(false);
+    setIsDragging(false);
+    setIsResizing(false);
+    setResizeHandle(null);
+    setDragStart(null);
+    
+    if (activeTool === 'eraser' || activeTool === 'brush' || activeTool === 'smart_brush') {
       setIsDrawing(false);
-      saveToHistory();
+      if (isDrawing) {
+        saveToHistory();
+      }
     }
+  };
+
+  const handleMouseLeave = () => {
+    setShowCursor(false);
+    clearCursorPreview();
+    setIsDrawing(false);
+    setIsPanning(false);
+    setIsCropping(false);
+    setIsDragging(false);
+    setIsResizing(false);
   };
 
   const drawBrush = (pos) => {
@@ -136,131 +411,204 @@ export function EditModal({ imageUrl, onClose }) {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    
     ctx.globalCompositeOperation = activeTool === 'eraser' ? 'destination-out' : 'source-over';
     ctx.beginPath();
     ctx.arc(pos.x, pos.y, brushSize / 2, 0, Math.PI * 2);
+    
     if (activeTool === 'brush') {
       ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
     }
     ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
   };
 
-  const drawCropOverlay = () => {
-    const overlayCanvas = overlayCanvasRef.current;
-    if (!overlayCanvas) return;
-    const ctx = overlayCanvas.getContext('2d');
-    if (!ctx) return;
-    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-    if (cropStart && cropEnd) {
-      const x = Math.min(cropStart.x, cropEnd.x);
-      const y = Math.min(cropStart.y, cropEnd.y);
-      const width = Math.abs(cropEnd.x - cropStart.x);
-      const height = Math.abs(cropEnd.y - cropStart.y);
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-      ctx.fillRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-      ctx.globalCompositeOperation = 'destination-out';
-      ctx.fillRect(x, y, width, height);
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.strokeStyle = '#00ff00';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(x, y, width, height);
-    }
-  };
-
-  const applyCrop = () => {
-    if (!cropStart || !cropEnd) return;
+  const smartBrushErase = (pos) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const x = Math.min(cropStart.x, cropEnd.x);
-    const y = Math.min(cropStart.y, cropEnd.y);
-    const width = Math.abs(cropEnd.x - cropStart.x);
-    const height = Math.abs(cropEnd.y - cropStart.y);
+    
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    
+    const centerX = Math.floor(pos.x);
+    const centerY = Math.floor(pos.y);
+    const radius = brushSize / 2;
+    
+    if (centerX < 0 || centerX >= canvas.width || centerY < 0 || centerY >= canvas.height) return;
+    
+    const centerIndex = (centerY * canvas.width + centerX) * 4;
+    const targetR = data[centerIndex];
+    const targetG = data[centerIndex + 1];
+    const targetB = data[centerIndex + 2];
+    
+    for (let x = Math.max(0, centerX - radius); x <= Math.min(canvas.width - 1, centerX + radius); x++) {
+      for (let y = Math.max(0, centerY - radius); y <= Math.min(canvas.height - 1, centerY + radius); y++) {
+        const distance = Math.sqrt((x - centerX) ** 2 + (y - centerY) ** 2);
+        if (distance <= radius) {
+          const index = (y * canvas.width + x) * 4;
+          const r = data[index];
+          const g = data[index + 1];
+          const b = data[index + 2];
+          
+          const colorDiff = Math.sqrt((r - targetR) ** 2 + (g - targetG) ** 2 + (b - targetB) ** 2);
+          
+          if (colorDiff <= tolerance) {
+            const alpha = Math.max(0, 1 - (distance / radius));
+            data[index + 3] *= (1 - alpha);
+          }
+        }
+      }
+    }
+    
+    ctx.putImageData(imageData, 0, 0);
+  };
+
+  const drawCropOverlay = () => {
+    const overlayCanvas = overlayCanvasRef.current;
+    if (!overlayCanvas || !cropSelection) return;
+    const ctx = overlayCanvas.getContext('2d');
+    if (!ctx) return;
+    
+    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    
+    const { x, y, width, height } = cropSelection;
+    
+    // Karanlık overlay
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    
+    // Seçili alan temiz
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillRect(x, y, width, height);
+    ctx.globalCompositeOperation = 'source-over';
+    
+    // Seçim çerçevesi
+    ctx.strokeStyle = '#00ff00';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, width, height);
+    
+    // Resize tutamaçları
+    const handleSize = 8;
+    ctx.fillStyle = '#00ff00';
+    
+    // Köşe tutamaçları
+    ctx.fillRect(x - handleSize/2, y - handleSize/2, handleSize, handleSize);
+    ctx.fillRect(x + width - handleSize/2, y - handleSize/2, handleSize, handleSize);
+    ctx.fillRect(x - handleSize/2, y + height - handleSize/2, handleSize, handleSize);
+    ctx.fillRect(x + width - handleSize/2, y + height - handleSize/2, handleSize, handleSize);
+    
+    // Kenar tutamaçları
+    ctx.fillRect(x + width/2 - handleSize/2, y - handleSize/2, handleSize, handleSize);
+    ctx.fillRect(x + width/2 - handleSize/2, y + height - handleSize/2, handleSize, handleSize);
+    ctx.fillRect(x - handleSize/2, y + height/2 - handleSize/2, handleSize, handleSize);
+    ctx.fillRect(x + width - handleSize/2, y + height/2 - handleSize/2, handleSize, handleSize);
+    
+    // Oran bilgisi
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(x, y - 25, 150, 20);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '12px Arial';
+    ctx.fillText(`${cropRatios[cropRatio].label} - Enter: Uygula`, x + 5, y - 10);
+  };
+
+  const applyCrop = () => {
+    if (!cropSelection) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    const { x, y, width, height } = cropSelection;
+    
+    if (width < 10 || height < 10) return;
+    
     const imageData = ctx.getImageData(x, y, width, height);
     canvas.width = width;
     canvas.height = height;
     ctx.putImageData(imageData, 0, 0);
+    
     const overlayCanvas = overlayCanvasRef.current;
+    const cursorCanvas = cursorCanvasRef.current;
     if (overlayCanvas) {
       overlayCanvas.width = width;
       overlayCanvas.height = height;
       const overlayCtx = overlayCanvas.getContext('2d');
       if (overlayCtx) overlayCtx.clearRect(0, 0, width, height);
     }
-    setCropStart(null);
-    setCropEnd(null);
+    if (cursorCanvas) {
+      cursorCanvas.width = width;
+      cursorCanvas.height = height;
+    }
+    
+    setCropSelection(null);
     saveToHistory();
   };
 
-  const magicWandSelect = async (pos) => {
+  const magicWandSelect = (pos) => {
     const canvas = canvasRef.current;
+    if (!canvas) return;
     const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageData.data;
-    const tolerance = 10;
-    const startIndex = (pos.y * canvas.width + pos.x) * 4;
-    const startR = data[startIndex];
-    const startG = data[startIndex + 1];
-    const startB = data[startIndex + 2];
-    const startA = data[startIndex + 3];
-    const stack = [{ x: Math.floor(pos.x), y: Math.floor(pos.y) }];
+    
+    const startX = Math.floor(pos.x);
+    const startY = Math.floor(pos.y);
+    
+    if (startX < 0 || startX >= canvas.width || startY < 0 || startY >= canvas.height) return;
+    
+    const startIndex = (startY * canvas.width + startX) * 4;
+    const targetR = data[startIndex];
+    const targetG = data[startIndex + 1];
+    const targetB = data[startIndex + 2];
+    const targetA = data[startIndex + 3];
+    
+    if (targetA === 0) return;
+    
     const visited = new Set();
+    const stack = [{ x: startX, y: startY }];
+    
     while (stack.length > 0) {
       const { x, y } = stack.pop();
       const key = `${x},${y}`;
+      
       if (visited.has(key) || x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) {
         continue;
       }
-      visited.add(key);
+      
       const index = (y * canvas.width + x) * 4;
       const r = data[index];
       const g = data[index + 1];
       const b = data[index + 2];
       const a = data[index + 3];
-      const diff = Math.abs(r - startR) + Math.abs(g - startG) + Math.abs(b - startB) + Math.abs(a - startA);
-      if (diff <= tolerance) {
+      
+      if (a === 0) continue;
+      
+      const colorDiff = Math.sqrt((r - targetR) ** 2 + (g - targetG) ** 2 + (b - targetB) ** 2);
+      
+      if (colorDiff <= tolerance) {
+        visited.add(key);
         data[index + 3] = 0;
+        
         stack.push({ x: x + 1, y });
         stack.push({ x: x - 1, y });
         stack.push({ x, y: y + 1 });
         stack.push({ x, y: y - 1 });
       }
     }
+    
     ctx.putImageData(imageData, 0, 0);
     saveToHistory();
-  };
-
-  const smartBrush = (pos) => {
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const data = imageData.data;
-    const radius = brushSize;
-    for (let dx = -radius; dx <= radius; dx++) {
-      for (let dy = -radius; dy <= radius; dy++) {
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        if (distance <= radius) {
-          const x = Math.floor(pos.x + dx);
-          const y = Math.floor(pos.y + dy);
-          if (x >= 0 && x < canvas.width && y >= 0 && y < canvas.height) {
-            const index = (y * canvas.width + x) * 4;
-            const alpha = data[index + 3];
-            if (alpha < 128) {
-              data[index + 3] = Math.min(255, alpha + (255 - distance * 255 / radius));
-            }
-          }
-        }
-      }
-    }
-    ctx.putImageData(imageData, 0, 0);
   };
 
   const downloadEditedImage = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const link = document.createElement("a");
-    link.href = canvas.toDataURL();
+    link.href = canvas.toDataURL("image/png");
     link.download = "duzenlenmis-gorsel.png";
     document.body.appendChild(link);
     link.click();
@@ -268,11 +616,11 @@ export function EditModal({ imageUrl, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-80">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-90">
       <div className="bg-gray-800 rounded-lg w-full h-full max-w-7xl max-h-[95vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-700">
-          <h2 className="text-xl font-bold">Görsel Editörü</h2>
+          <h2 className="text-xl font-bold text-white">Gelişmiş Görsel Editörü</h2>
           <button
             className="text-white hover:text-gray-300 transition-colors"
             onClick={onClose}
@@ -280,44 +628,88 @@ export function EditModal({ imageUrl, onClose }) {
             <X size={24} />
           </button>
         </div>
+
         {/* Toolbar */}
-        <div className="flex items-center gap-2 p-4 border-b border-gray-700 bg-gray-700">
+        <div className="flex items-center gap-2 p-4 border-b border-gray-700 bg-gray-700 overflow-x-auto">
+          {/* Main Tools */}
           <div className="flex gap-2">
             <button
-              className={`p-2 rounded ${activeTool === 'crop' ? 'bg-blue-600' : 'bg-gray-600 hover:bg-gray-500'}`}
+              className={`p-2 rounded ${activeTool === 'crop' ? 'bg-blue-600' : 'bg-gray-600 hover:bg-gray-500'} text-white`}
               onClick={() => setActiveTool('crop')}
               title="Kırp"
             >
               <Crop size={20} />
             </button>
             <button
-              className={`p-2 rounded ${activeTool === 'eraser' ? 'bg-blue-600' : 'bg-gray-600 hover:bg-gray-500'}`}
+              className={`p-2 rounded ${activeTool === 'eraser' ? 'bg-blue-600' : 'bg-gray-600 hover:bg-gray-500'} text-white`}
               onClick={() => setActiveTool('eraser')}
               title="Silgi"
             >
               <Eraser size={20} />
             </button>
             <button
-              className={`p-2 rounded ${activeTool === 'magic_wand' ? 'bg-blue-600' : 'bg-gray-600 hover:bg-gray-500'}`}
-              onClick={() => setActiveTool('magic_wand')}
-              title="Sihirli Değnek"
+              className={`p-2 rounded ${activeTool === 'brush' ? 'bg-blue-600' : 'bg-gray-600 hover:bg-gray-500'} text-white`}
+              onClick={() => setActiveTool('brush')}
+              title="Fırça"
+            >
+              <Brush size={20} />
+            </button>
+            <button
+              className={`p-2 rounded ${activeTool === 'smart_brush' ? 'bg-blue-600' : 'bg-gray-600 hover:bg-gray-500'} text-white`}
+              onClick={() => setActiveTool('smart_brush')}
+              title="Akıllı Silgi"
             >
               <Wand2 size={20} />
             </button>
             <button
-              className={`p-2 rounded ${activeTool === 'brush' ? 'bg-blue-600' : 'bg-gray-600 hover:bg-gray-500'}`}
-              onClick={() => setActiveTool('brush')}
-              title="Akıllı Fırça"
+              className={`p-2 rounded ${activeTool === 'magic_wand' ? 'bg-blue-600' : 'bg-gray-600 hover:bg-gray-500'} text-white`}
+              onClick={() => setActiveTool('magic_wand')}
+              title="Sihirli Değnek"
             >
-              <Brush size={20} />
+              <Move size={20} />
             </button>
           </div>
+
+          {/* Crop Ratios */}
+          {activeTool === 'crop' && (
+            <>
+              <div className="w-px h-8 bg-gray-600 mx-2"></div>
+              <div className="flex gap-1">
+                {Object.entries(cropRatios).map(([key, ratio]) => {
+                  const IconComponent = ratio.icon;
+                  return (
+                    <button
+                      key={key}
+                      className={`p-2 rounded text-xs ${cropRatio === key ? 'bg-blue-600' : 'bg-gray-600 hover:bg-gray-500'} text-white flex items-center gap-1`}
+                      onClick={() => setCropRatio(key)}
+                      title={ratio.label}
+                    >
+                      <IconComponent size={16} />
+                      <span className="hidden sm:inline">{key}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {cropSelection && (
+                <button
+                  onClick={applyCrop}
+                  className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded text-sm"
+                  title="Crop Uygula (Enter)"
+                >
+                  ✓ Crop
+                </button>
+              )}
+            </>
+          )}
+
           <div className="w-px h-8 bg-gray-600 mx-2"></div>
+
+          {/* Undo/Redo */}
           <div className="flex items-center gap-2">
             <button
               onClick={undo}
               disabled={historyIndex <= 0}
-              className="p-2 rounded bg-gray-600 hover:bg-gray-500 disabled:opacity-50"
+              className="p-2 rounded bg-gray-600 hover:bg-gray-500 disabled:opacity-50 text-white"
               title="Geri Al"
             >
               <RotateCcw size={20} />
@@ -325,16 +717,19 @@ export function EditModal({ imageUrl, onClose }) {
             <button
               onClick={redo}
               disabled={historyIndex >= history.length - 1}
-              className="p-2 rounded bg-gray-600 hover:bg-gray-500 disabled:opacity-50"
+              className="p-2 rounded bg-gray-600 hover:bg-gray-500 disabled:opacity-50 text-white"
               title="İleri Al"
             >
               <RotateCw size={20} />
             </button>
           </div>
+
           <div className="w-px h-8 bg-gray-600 mx-2"></div>
-          {(activeTool === 'eraser' || activeTool === 'brush') && (
+
+          {/* Brush Size */}
+          {(activeTool === 'eraser' || activeTool === 'brush' || activeTool === 'smart_brush') && (
             <div className="flex items-center gap-2">
-              <label className="text-sm">Fırça Boyutu:</label>
+              <label className="text-sm text-white">Boyut:</label>
               <input
                 type="range"
                 min="5"
@@ -343,32 +738,61 @@ export function EditModal({ imageUrl, onClose }) {
                 onChange={(e) => setBrushSize(Number(e.target.value))}
                 className="w-20"
               />
-              <span className="text-sm w-8">{brushSize}</span>
+              <span className="text-sm w-8 text-white">{brushSize}</span>
             </div>
           )}
+
+          {/* Tolerance */}
+          {(activeTool === 'magic_wand' || activeTool === 'smart_brush') && (
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-white">Tolerans:</label>
+              <input
+                type="range"
+                min="1"
+                max="100"
+                value={tolerance}
+                onChange={(e) => setTolerance(Number(e.target.value))}
+                className="w-20"
+              />
+              <span className="text-sm w-8 text-white">{tolerance}</span>
+            </div>
+          )}
+
           <div className="w-px h-8 bg-gray-600 mx-2"></div>
+
+          {/* Zoom Controls */}
           <div className="flex items-center gap-2">
             <button
               onClick={() => setZoom(Math.max(0.1, zoom - 0.1))}
-              className="p-2 rounded bg-gray-600 hover:bg-gray-500"
+              className="p-2 rounded bg-gray-600 hover:bg-gray-500 text-white"
               title="Uzaklaştır"
             >
               <ZoomOut size={20} />
             </button>
-            <span className="text-sm w-12 text-center">{Math.round(zoom * 100)}%</span>
+            <span className="text-sm w-12 text-center text-white">{Math.round(zoom * 100)}%</span>
             <button
-              onClick={() => setZoom(Math.min(3, zoom + 0.1))}
-              className="p-2 rounded bg-gray-600 hover:bg-gray-500"
+              onClick={() => setZoom(Math.min(5, zoom + 0.1))}
+              className="p-2 rounded bg-gray-600 hover:bg-gray-500 text-white"
               title="Yakınlaştır"
             >
               <ZoomIn size={20} />
             </button>
           </div>
         </div>
+
         {/* Canvas Area */}
-        <div className="flex-1 bg-gray-900 relative overflow-hidden" ref={containerRef}>
+        <div 
+          className="flex-1 bg-gray-900 relative overflow-hidden cursor-crosshair" 
+          ref={containerRef}
+          style={{ cursor: activeTool === 'pan' ? 'move' : 'crosshair' }}
+        >
           <div className="absolute inset-0 flex items-center justify-center">
-            <div className="relative" style={{ transform: `scale(${zoom})` }}>
+            <div 
+              className="relative" 
+              style={{ 
+                transform: `scale(${zoom}) translate(${panOffset.x / zoom}px, ${panOffset.y / zoom}px)` 
+              }}
+            >
               <img
                 ref={imageRef}
                 src={imageUrl}
@@ -379,26 +803,37 @@ export function EditModal({ imageUrl, onClose }) {
               />
               <canvas
                 ref={canvasRef}
-                className="border border-gray-600 cursor-crosshair"
+                className="border border-gray-600"
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
-                onMouseLeave={handleMouseUp}
+                onMouseLeave={handleMouseLeave}
+                onContextMenu={(e) => e.preventDefault()}
               />
               <canvas
                 ref={overlayCanvasRef}
                 className="absolute top-0 left-0 pointer-events-none"
               />
+              <canvas
+                ref={cursorCanvasRef}
+                className="absolute top-0 left-0 pointer-events-none"
+              />
             </div>
           </div>
         </div>
+
         {/* Footer */}
         <div className="flex justify-between items-center p-4 border-t border-gray-700">
           <div className="text-sm text-gray-400">
-            {activeTool === 'crop' && "Kırpılacak alanı seçin"}
+            {activeTool === 'crop' && !cropSelection && "Kırpma alanı oluşturmak için tıklayın"}
+            {activeTool === 'crop' && cropSelection && "Alanı hareket ettirin veya boyutlandırın - Enter: Uygula, Esc: İptal"}
             {activeTool === 'eraser' && "Silmek istediğiniz alanları boyayın"}
+            {activeTool === 'brush' && "Boyamak istediğiniz alanları işaretleyin"}
+            {activeTool === 'smart_brush' && "Benzer renkteki alanları silmek için boyayın"}
             {activeTool === 'magic_wand' && "Benzer renkteki alanları seçmek için tıklayın"}
-            {activeTool === 'brush' && "Geri getirmek istediğiniz alanları boyayın"}
+            <span className="ml-4 text-xs">
+              • Ctrl/Cmd + Tekerlek: Zoom • Orta Tuş: Pan
+            </span>
           </div>
           <div className="flex gap-2">
             <button
@@ -408,14 +843,14 @@ export function EditModal({ imageUrl, onClose }) {
               Vazgeç
             </button>
             <button
-              className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+              className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 flex items-center gap-2"
               onClick={downloadEditedImage}
             >
-              <Download size={18} className="inline mr-1" /> İndir
+              <Download size={18} /> İndir
             </button>
           </div>
         </div>
       </div>
     </div>
   );
-} 
+}
