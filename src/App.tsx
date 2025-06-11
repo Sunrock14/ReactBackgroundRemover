@@ -493,15 +493,6 @@ export default function App() {
           <p className="text-sm text-gray-400">veya tıklayarak seçin (en fazla 20)</p>
         </div>
 
-        <div className="flex flex-col items-center gap-4 mb-8">
-          <button
-            onClick={clearAll}
-            className="px-3 py-1 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 focus:ring-offset-black transition-colors duration-200 text-sm"
-          >
-            Tümünü Temizle
-          </button>
-        </div>
-
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {images.map((img, index) => (
             <div key={index} className="relative group bg-gray-800 rounded-lg p-2">
@@ -512,11 +503,13 @@ export default function App() {
               />
               <div className="absolute inset-0 bg-black bg-opacity-60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-lg flex items-center justify-center gap-2">
                 <button
-                  onClick={() => copyToClipboard(img.processedUrl)}
-                  className="p-2 bg-white text-gray-900 rounded-md hover:bg-gray-200 transition-colors duration-200"
-                  title="Kopyala"
+                  onClick={() => {
+                    setImages(images.filter((_, i) => i !== index));
+                  }}
+                  className="p-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors duration-200"
+                  title="Sil"
                 >
-                  <Copy size={16} />
+                  <X size={16} />
                 </button>
                 <button
                   onClick={() => downloadImage(img.processedUrl, img.name.replace(/\.[^/.]+$/, "") + "-arkaplan-kaldirildi.png")}
