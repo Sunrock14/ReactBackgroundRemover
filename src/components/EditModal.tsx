@@ -1,16 +1,20 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Crop, Eraser, Wand2, Brush, X, RotateCcw, RotateCw, ZoomIn, ZoomOut, Download, Move, Square, Smartphone, Monitor, Film } from "lucide-react";
+import { 
+  Crop, Eraser, Wand2, Brush, X, RotateCcw, RotateCw, ZoomIn, ZoomOut, Download, Move, Square, 
+  Smartphone, Monitor, Film, FlipHorizontal, FlipVertical, RotateCw as Rotate90, Palette, 
+  Sun, Moon, Contrast, Droplets, Zap, Eye, Sparkles, Image as ImageIcon
+} from "lucide-react";
 
 export default function EditModal({ imageUrl, onClose }) {
   const [activeTool, setActiveTool] = useState('crop');
   const [brushSize, setBrushSize] = useState(20);
   const [isDrawing, setIsDrawing] = useState(false);
-  const [cropSelection, setCropSelection] = useState(null); // { x, y, width, height }
+  const [cropSelection, setCropSelection] = useState(null);
   const [isCropping, setIsCropping] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [dragStart, setDragStart] = useState(null);
-  const [resizeHandle, setResizeHandle] = useState(null); // 'nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'
+  const [resizeHandle, setResizeHandle] = useState(null);
   const [cropRatio, setCropRatio] = useState('free');
   const [zoom, setZoom] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
@@ -21,12 +25,29 @@ export default function EditModal({ imageUrl, onClose }) {
   const [cursorPos, setCursorPos] = useState({ x: 0, y: 0 });
   const [showCursor, setShowCursor] = useState(false);
   const [tolerance, setTolerance] = useState(10);
+  const [brushColor, setBrushColor] = useState('#ffffff');
+  
+  // Yeni filter durumları
+  const [filters, setFilters] = useState({
+    brightness: 100,
+    contrast: 100,
+    saturation: 100,
+    hue: 0,
+    blur: 0,
+    sepia: 0,
+    grayscale: 0,
+    invert: 0,
+    opacity: 100
+  });
+  const [showFilters, setShowFilters] = useState(false);
+  const [rotation, setRotation] = useState(0);
 
   const canvasRef = useRef(null);
   const overlayCanvasRef = useRef(null);
   const cursorCanvasRef = useRef(null);
   const imageRef = useRef(null);
   const containerRef = useRef(null);
+  const originalImageData = useRef(null);
 
   const cropRatios = {
     'free': { label: 'Serbest', ratio: null, icon: Crop },
@@ -37,13 +58,23 @@ export default function EditModal({ imageUrl, onClose }) {
     '3:4': { label: '3:4 (Portre)', ratio: 3/4, icon: Film }
   };
 
+  const filterPresets = {
+    normal: { name: 'Normal', brightness: 100, contrast: 100, saturation: 100, hue: 0, blur: 0, sepia: 0, grayscale: 0, invert: 0 },
+    vintage: { name: 'Vintage', brightness: 110, contrast: 85, saturation: 80, hue: 20, blur: 0, sepia: 40, grayscale: 0, invert: 0 },
+    bw: { name: 'Siyah Beyaz', brightness: 100, contrast: 110, saturation: 0, hue: 0, blur: 0, sepia: 0, grayscale: 100, invert: 0 },
+    warm: { name: 'Sıcak', brightness: 105, contrast: 95, saturation: 120, hue: 15, blur: 0, sepia: 20, grayscale: 0, invert: 0 },
+    cool: { name: 'Soğuk', brightness: 95, contrast: 105, saturation: 110, hue: -10, blur: 0, sepia: 0, grayscale: 0, invert: 0 },
+    dramatic: { name: 'Dramatik', brightness: 90, contrast: 140, saturation: 130, hue: 0, blur: 0, sepia: 0, grayscale: 0, invert: 0 },
+    soft: { name: 'Yumuşak', brightness: 115, contrast: 80, saturation: 90, hue: 5, blur: 1, sepia: 10, grayscale: 0, invert: 0 },
+    high_contrast: { name: 'Yüksek Kontrast', brightness: 100, contrast: 180, saturation: 120, hue: 0, blur: 0, sepia: 0, grayscale: 0, invert: 0 }
+  };
+
   useEffect(() => {
     if (imageUrl) {
       setTimeout(() => initializeCanvas(), 100);
     }
   }, [imageUrl]);
 
-  // Keyboard event listener for Enter key
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Enter' && activeTool === 'crop' && cropSelection) {
@@ -59,7 +90,6 @@ export default function EditModal({ imageUrl, onClose }) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [activeTool, cropSelection]);
 
-  // Mouse wheel zoom
   useEffect(() => {
     const handleWheel = (e) => {
       if (e.ctrlKey || e.metaKey) {
@@ -75,6 +105,11 @@ export default function EditModal({ imageUrl, onClose }) {
       return () => container.removeEventListener('wheel', handleWheel);
     }
   }, []);
+
+  // Filtreleri uygula
+  useEffect(() => {
+    applyFilters();
+  }, [filters, rotation]);
 
   const saveToHistory = useCallback(() => {
     const canvas = canvasRef.current;
@@ -137,9 +172,157 @@ export default function EditModal({ imageUrl, onClose }) {
     if (!ctx) return;
     ctx.drawImage(img, 0, 0);
 
+    // Orijinal görsel verisini sakla
+    originalImageData.current = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
     const initialHistory = [canvas.toDataURL()];
     setHistory(initialHistory);
     setHistoryIndex(0);
+  };
+
+  const applyFilters = () => {
+    const canvas = canvasRef.current;
+    if (!canvas || !originalImageData.current) return;
+    
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Rotasyonu uygula
+    if (rotation !== 0) {
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.rotate((rotation * Math.PI) / 180);
+      ctx.translate(-centerX, -centerY);
+    }
+
+    // Canvas filtresini uygula
+    const filterString = `
+      brightness(${filters.brightness}%) 
+      contrast(${filters.contrast}%) 
+      saturate(${filters.saturation}%) 
+      hue-rotate(${filters.hue}deg) 
+      blur(${filters.blur}px) 
+      sepia(${filters.sepia}%) 
+      grayscale(${filters.grayscale}%) 
+      invert(${filters.invert}%) 
+      opacity(${filters.opacity}%)
+    `.replace(/\s+/g, ' ').trim();
+
+    ctx.filter = filterString;
+    ctx.putImageData(originalImageData.current, 0, 0);
+    ctx.filter = 'none';
+
+    if (rotation !== 0) {
+      ctx.restore();
+    }
+  };
+
+  const resetFilters = () => {
+    setFilters({
+      brightness: 100,
+      contrast: 100,
+      saturation: 100,
+      hue: 0,
+      blur: 0,
+      sepia: 0,
+      grayscale: 0,
+      invert: 0,
+      opacity: 100
+    });
+    setRotation(0);
+  };
+
+  const applyFilterPreset = (preset) => {
+    setFilters(filterPresets[preset]);
+  };
+
+  const flipHorizontal = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    
+    ctx.save();
+    ctx.scale(-1, 1);
+    ctx.drawImage(canvas, -canvas.width, 0);
+    ctx.restore();
+
+    originalImageData.current = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    saveToHistory();
+  };
+
+  const flipVertical = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    
+    ctx.save();
+    ctx.scale(1, -1);
+    ctx.drawImage(canvas, 0, -canvas.height);
+    ctx.restore();
+
+    originalImageData.current = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    saveToHistory();
+  };
+
+  const rotateImage = (degrees) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    
+    if (degrees === 90 || degrees === -90) {
+      // 90 derece döndürme için canvas boyutlarını değiştir
+      const tempCanvas = document.createElement('canvas');
+      const tempCtx = tempCanvas.getContext('2d');
+      tempCanvas.width = canvas.height;
+      tempCanvas.height = canvas.width;
+      
+      tempCtx.translate(tempCanvas.width / 2, tempCanvas.height / 2);
+      tempCtx.rotate((degrees * Math.PI) / 180);
+      tempCtx.drawImage(canvas, -canvas.width / 2, -canvas.height / 2);
+      
+      canvas.width = tempCanvas.width;
+      canvas.height = tempCanvas.height;
+      
+      const overlayCanvas = overlayCanvasRef.current;
+      const cursorCanvas = cursorCanvasRef.current;
+      if (overlayCanvas) {
+        overlayCanvas.width = canvas.width;
+        overlayCanvas.height = canvas.height;
+      }
+      if (cursorCanvas) {
+        cursorCanvas.width = canvas.width;
+        cursorCanvas.height = canvas.height;
+      }
+      
+      ctx.drawImage(tempCanvas, 0, 0);
+    } else {
+      // Diğer açılar için normal döndürme
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.rotate((degrees * Math.PI) / 180);
+      ctx.translate(-centerX, -centerY);
+      ctx.putImageData(imageData, 0, 0);
+      ctx.restore();
+    }
+
+    originalImageData.current = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    saveToHistory();
   };
 
   const getMousePos = (e) => {
@@ -204,13 +387,11 @@ export default function EditModal({ imageUrl, onClose }) {
     const { x, y, width, height } = cropSelection;
     const handleSize = 10;
     
-    // Köşe tutamaçları
     if (Math.abs(pos.x - x) < handleSize && Math.abs(pos.y - y) < handleSize) return 'nw';
     if (Math.abs(pos.x - (x + width)) < handleSize && Math.abs(pos.y - y) < handleSize) return 'ne';
     if (Math.abs(pos.x - x) < handleSize && Math.abs(pos.y - (y + height)) < handleSize) return 'sw';
     if (Math.abs(pos.x - (x + width)) < handleSize && Math.abs(pos.y - (y + height)) < handleSize) return 'se';
     
-    // Kenar tutamaçları
     if (Math.abs(pos.x - (x + width/2)) < handleSize && Math.abs(pos.y - y) < handleSize) return 'n';
     if (Math.abs(pos.x - (x + width/2)) < handleSize && Math.abs(pos.y - (y + height)) < handleSize) return 's';
     if (Math.abs(pos.x - x) < handleSize && Math.abs(pos.y - (y + height/2)) < handleSize) return 'w';
@@ -239,7 +420,7 @@ export default function EditModal({ imageUrl, onClose }) {
   };
 
   const handleMouseDown = (e) => {
-    if (e.button === 1) { // Middle mouse button for panning
+    if (e.button === 1) {
       e.preventDefault();
       setIsPanning(true);
       setPanStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y });
@@ -261,7 +442,6 @@ export default function EditModal({ imageUrl, onClose }) {
           y: pos.y - cropSelection.y
         });
       } else {
-        // Yeni seçim başlat
         setIsCropping(true);
         const initialSize = 100;
         const { width, height } = constrainDimensions(initialSize, initialSize);
@@ -339,7 +519,6 @@ export default function EditModal({ imageUrl, onClose }) {
             break;
         }
         
-        // Minimum boyut kontrolü
         if (newSelection.width > 10 && newSelection.height > 10) {
           const constrained = constrainDimensions(newSelection.width, newSelection.height);
           newSelection.width = constrained.width;
@@ -417,7 +596,7 @@ export default function EditModal({ imageUrl, onClose }) {
     ctx.arc(pos.x, pos.y, brushSize / 2, 0, Math.PI * 2);
     
     if (activeTool === 'brush') {
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+      ctx.fillStyle = brushColor + 'CC';
     }
     ctx.fill();
     ctx.globalCompositeOperation = 'source-over';
@@ -475,37 +654,30 @@ export default function EditModal({ imageUrl, onClose }) {
     
     const { x, y, width, height } = cropSelection;
     
-    // Karanlık overlay
     ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
     ctx.fillRect(0, 0, overlayCanvas.width, overlayCanvas.height);
     
-    // Seçili alan temiz
     ctx.globalCompositeOperation = 'destination-out';
     ctx.fillRect(x, y, width, height);
     ctx.globalCompositeOperation = 'source-over';
     
-    // Seçim çerçevesi
     ctx.strokeStyle = '#00ff00';
     ctx.lineWidth = 2;
     ctx.strokeRect(x, y, width, height);
     
-    // Resize tutamaçları
     const handleSize = 8;
     ctx.fillStyle = '#00ff00';
     
-    // Köşe tutamaçları
     ctx.fillRect(x - handleSize/2, y - handleSize/2, handleSize, handleSize);
     ctx.fillRect(x + width - handleSize/2, y - handleSize/2, handleSize, handleSize);
     ctx.fillRect(x - handleSize/2, y + height - handleSize/2, handleSize, handleSize);
     ctx.fillRect(x + width - handleSize/2, y + height - handleSize/2, handleSize, handleSize);
     
-    // Kenar tutamaçları
     ctx.fillRect(x + width/2 - handleSize/2, y - handleSize/2, handleSize, handleSize);
     ctx.fillRect(x + width/2 - handleSize/2, y + height - handleSize/2, handleSize, handleSize);
     ctx.fillRect(x - handleSize/2, y + height/2 - handleSize/2, handleSize, handleSize);
     ctx.fillRect(x + width - handleSize/2, y + height/2 - handleSize/2, handleSize, handleSize);
     
-    // Oran bilgisi
     ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
     ctx.fillRect(x, y - 25, 150, 20);
     ctx.fillStyle = '#ffffff';
@@ -543,6 +715,7 @@ export default function EditModal({ imageUrl, onClose }) {
     }
     
     setCropSelection(null);
+    originalImageData.current = ctx.getImageData(0, 0, canvas.width, canvas.height);
     saveToHistory();
   };
 
@@ -601,6 +774,7 @@ export default function EditModal({ imageUrl, onClose }) {
     }
     
     ctx.putImageData(imageData, 0, 0);
+    originalImageData.current = ctx.getImageData(0, 0, canvas.width, canvas.height);
     saveToHistory();
   };
 
@@ -670,6 +844,51 @@ export default function EditModal({ imageUrl, onClose }) {
             </button>
           </div>
 
+          <div className="w-px h-8 bg-gray-600 mx-2"></div>
+
+          {/* Transform Tools */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => flipHorizontal()}
+              className="p-2 rounded bg-gray-600 hover:bg-gray-500 text-white"
+              title="Yatay Çevir"
+            >
+              <FlipHorizontal size={20} />
+            </button>
+            <button
+              onClick={() => flipVertical()}
+              className="p-2 rounded bg-gray-600 hover:bg-gray-500 text-white"
+              title="Dikey Çevir"
+            >
+              <FlipVertical size={20} />
+            </button>
+            <button
+              onClick={() => rotateImage(90)}
+              className="p-2 rounded bg-gray-600 hover:bg-gray-500 text-white"
+              title="90° Döndür"
+            >
+              <Rotate90 size={20} />
+            </button>
+            <button
+              onClick={() => rotateImage(-90)}
+              className="p-2 rounded bg-gray-600 hover:bg-gray-500 text-white"
+              title="-90° Döndür"
+            >
+              <RotateCcw size={20} />
+            </button>
+          </div>
+
+          <div className="w-px h-8 bg-gray-600 mx-2"></div>
+
+          {/* Filter Toggle */}
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={`p-2 rounded ${showFilters ? 'bg-purple-600' : 'bg-gray-600 hover:bg-gray-500'} text-white`}
+            title="Filtreler"
+          >
+            <Palette size={20} />
+          </button>
+
           {/* Crop Ratios */}
           {activeTool === 'crop' && (
             <>
@@ -726,7 +945,7 @@ export default function EditModal({ imageUrl, onClose }) {
 
           <div className="w-px h-8 bg-gray-600 mx-2"></div>
 
-          {/* Brush Size */}
+          {/* Brush Settings */}
           {(activeTool === 'eraser' || activeTool === 'brush' || activeTool === 'smart_brush') && (
             <div className="flex items-center gap-2">
               <label className="text-sm text-white">Boyut:</label>
@@ -739,6 +958,18 @@ export default function EditModal({ imageUrl, onClose }) {
                 className="w-20"
               />
               <span className="text-sm w-8 text-white">{brushSize}</span>
+              {activeTool === 'brush' && (
+                <>
+                  <label className="text-sm text-white ml-2">Renk:</label>
+                  <input
+                    type="color"
+                    value={brushColor}
+                    onChange={e => setBrushColor(e.target.value)}
+                    className="w-8 h-8 p-0 border-0 bg-transparent cursor-pointer"
+                    title="Fırça Rengi"
+                  />
+                </>
+              )}
             </div>
           )}
 
@@ -779,6 +1010,172 @@ export default function EditModal({ imageUrl, onClose }) {
             </button>
           </div>
         </div>
+
+        {/* Filter Panel */}
+        {showFilters && (
+          <div className="p-4 border-b border-gray-700 bg-gray-750">
+            {/* Filter Presets */}
+            <div className="mb-4">
+              <h3 className="text-white text-sm font-medium mb-2">Hazır Filtreler</h3>
+              <div className="flex gap-2 flex-wrap">
+                {Object.entries(filterPresets).map(([key, preset]) => (
+                  <button
+                    key={key}
+                    onClick={() => applyFilterPreset(key)}
+                    className="px-3 py-1 text-xs bg-gray-600 hover:bg-gray-500 text-white rounded"
+                  >
+                    {preset.name}
+                  </button>
+                ))}
+                <button
+                  onClick={resetFilters}
+                  className="px-3 py-1 text-xs bg-red-600 hover:bg-red-700 text-white rounded"
+                >
+                  Sıfırla
+                </button>
+              </div>
+            </div>
+
+            {/* Manual Filter Controls */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+              <div>
+                <label className="text-white text-xs mb-1 block flex items-center gap-1">
+                  <Sun size={14} /> Parlaklık
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="200"
+                  value={filters.brightness}
+                  onChange={e => setFilters({...filters, brightness: Number(e.target.value)})}
+                  className="w-full"
+                />
+                <span className="text-xs text-gray-400">{filters.brightness}%</span>
+              </div>
+
+              <div>
+                <label className="text-white text-xs mb-1 block flex items-center gap-1">
+                  <Contrast size={14} /> Kontrast
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="200"
+                  value={filters.contrast}
+                  onChange={e => setFilters({...filters, contrast: Number(e.target.value)})}
+                  className="w-full"
+                />
+                <span className="text-xs text-gray-400">{filters.contrast}%</span>
+              </div>
+
+              <div>
+                <label className="text-white text-xs mb-1 block flex items-center gap-1">
+                  <Droplets size={14} /> Doygunluk
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="200"
+                  value={filters.saturation}
+                  onChange={e => setFilters({...filters, saturation: Number(e.target.value)})}
+                  className="w-full"
+                />
+                <span className="text-xs text-gray-400">{filters.saturation}%</span>
+              </div>
+
+              <div>
+                <label className="text-white text-xs mb-1 block flex items-center gap-1">
+                  <Palette size={14} /> Renk Tonu
+                </label>
+                <input
+                  type="range"
+                  min="-180"
+                  max="180"
+                  value={filters.hue}
+                  onChange={e => setFilters({...filters, hue: Number(e.target.value)})}
+                  className="w-full"
+                />
+                <span className="text-xs text-gray-400">{filters.hue}°</span>
+              </div>
+
+              <div>
+                <label className="text-white text-xs mb-1 block flex items-center gap-1">
+                  <Eye size={14} /> Bulanıklık
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="10"
+                  step="0.1"
+                  value={filters.blur}
+                  onChange={e => setFilters({...filters, blur: Number(e.target.value)})}
+                  className="w-full"
+                />
+                <span className="text-xs text-gray-400">{filters.blur}px</span>
+              </div>
+
+              <div>
+                <label className="text-white text-xs mb-1 block flex items-center gap-1">
+                  <Moon size={14} /> Sepya
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={filters.sepia}
+                  onChange={e => setFilters({...filters, sepia: Number(e.target.value)})}
+                  className="w-full"
+                />
+                <span className="text-xs text-gray-400">{filters.sepia}%</span>
+              </div>
+
+              <div>
+                <label className="text-white text-xs mb-1 block flex items-center gap-1">
+                  <ImageIcon size={14} /> Gri Ton
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={filters.grayscale}
+                  onChange={e => setFilters({...filters, grayscale: Number(e.target.value)})}
+                  className="w-full"
+                />
+                <span className="text-xs text-gray-400">{filters.grayscale}%</span>
+              </div>
+
+              <div>
+                <label className="text-white text-xs mb-1 block flex items-center gap-1">
+                  <Zap size={14} /> Ters Çevir
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={filters.invert}
+                  onChange={e => setFilters({...filters, invert: Number(e.target.value)})}
+                  className="w-full"
+                />
+                <span className="text-xs text-gray-400">{filters.invert}%</span>
+              </div>
+
+              <div>
+                <label className="text-white text-xs mb-1 block flex items-center gap-1">
+                  <Sparkles size={14} /> Opaklık
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={filters.opacity}
+                  onChange={e => setFilters({...filters, opacity: Number(e.target.value)})}
+                  className="w-full"
+                />
+                <span className="text-xs text-gray-400">{filters.opacity}%</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Canvas Area */}
         <div 
