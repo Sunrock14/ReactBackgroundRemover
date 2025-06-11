@@ -97,19 +97,25 @@ export default function App() {
     );
   };
 
+  const MAX_IMAGES = 20;
   const onDrop = useCallback(async (acceptedFiles) => {
     let newImages = [...images];
     for (const file of acceptedFiles) {
-      if (newImages.length >= 5) break;
-      // İşle
+      // Eğer sınırı aşacaksa, en sondaki (en eski) görseli sil
+      if (newImages.length >= MAX_IMAGES) {
+        newImages.pop();
+      }
       const processedUrl: string = await processImage(file);
-      newImages.push({
-        name: file.name,
-        fileUrl: URL.createObjectURL(file),
-        processedUrl: processedUrl,
-      });
+      newImages = [
+        {
+          name: file.name,
+          fileUrl: URL.createObjectURL(file),
+          processedUrl: processedUrl,
+        },
+        ...newImages
+      ];
     }
-    setImages(newImages.slice(-5));
+    setImages(newImages);
   }, [images]);
 
   const {
