@@ -721,26 +721,25 @@ export default function EditModal({ imageUrl, onClose }) {
     if (width < 10 || height < 10) return;
     
     const imageData = ctx.getImageData(x, y, width, height);
-    canvas.width = width;
-    canvas.height = height;
-    ctx.putImageData(imageData, 0, 0);
     
-    const overlayCanvas = overlayCanvasRef.current;
-    const cursorCanvas = cursorCanvasRef.current;
-    if (overlayCanvas) {
-      overlayCanvas.width = width;
-      overlayCanvas.height = height;
-      const overlayCtx = overlayCanvas.getContext('2d');
-      if (overlayCtx) overlayCtx.clearRect(0, 0, width, height);
-    }
-    if (cursorCanvas) {
-      cursorCanvas.width = width;
-      cursorCanvas.height = height;
+    // Yeni bir geçici canvas oluştur
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = width;
+    tempCanvas.height = height;
+    const tempCtx = tempCanvas.getContext('2d');
+    if (!tempCtx) return;
+    tempCtx.putImageData(imageData, 0, 0);
+    
+    // Croplanan görseli dataURL olarak al
+    const croppedDataUrl = tempCanvas.toDataURL();
+    
+    // imageRef'in src'sini güncelle
+    if (imageRef.current) {
+      imageRef.current.src = croppedDataUrl;
+      // Görsel yüklendiğinde initializeCanvas çağrılır
     }
     
     setCropSelection(null);
-    originalImageData.current = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    saveToHistory();
   };
 
   const magicWandSelect = (pos) => {

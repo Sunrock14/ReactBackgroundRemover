@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build --base /bg-remover --outDir docs",
+    "build": "vite build --base /bg-remover --outDir build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
