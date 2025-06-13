@@ -55,7 +55,7 @@ export default function App() {
         if (!navigator.gpu) {
           throw new Error("WebGPU bu tarayıcıda desteklenmiyor.");
         }
-        const model_id = "Xenova/modnet";
+        const model_id = "Xenova/u2netp";
         env.backends.onnx.wasm.proxy = false;
         modelRef.current ??= await AutoModel.from_pretrained(model_id, {
           device: "webgpu",
@@ -91,7 +91,7 @@ export default function App() {
     if (!modelRef.current) throw new Error("Model yüklenemedi.");
     const { output } = await modelRef.current({ input: pixel_values });
     const maskData = (
-      await RawImage.fromTensor(output[0].mul(255).to("uint8")).resize(
+      await RawImage.fromTensor(output.squeeze().mul(255).to("uint8")).resize(
         img.width,
         img.height,
       )
