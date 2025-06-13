@@ -15,7 +15,7 @@ export default function EditModal({ imageUrl, onClose }) {
   const [isResizing, setIsResizing] = useState(false);
   const [dragStart, setDragStart] = useState<{x: number, y: number} | null>(null);
   const [resizeHandle, setResizeHandle] = useState<null | 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'w' | 'e'>(null);
-  const [cropRatio, setCropRatio] = useState('free');
+  const [cropRatio, setCropRatio] = useState('Serbest');
   const [zoom, setZoom] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
